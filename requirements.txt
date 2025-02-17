@@ -1,4 +1,5 @@
-snowflake-connector-python<3.0.0
-cffi<2.0.0
-cryptography<41.0.0
-pyOpenSSL<24.0.0
+snowflake-connector-python==2.7.9
+cffi==1.15.1
+cryptography==39.0.1
+pyOpenSSL==23.0.0
+requests<3.0.0

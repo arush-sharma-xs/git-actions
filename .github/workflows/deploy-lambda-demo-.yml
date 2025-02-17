@@ -21,18 +21,19 @@ jobs:
         run: |
           sudo apt install zip
           mkdir -p ./deployment_zip
-          # Install dependencies with specific versions to avoid conflicts
-          pip install --target ./deployment_zip \
-            'snowflake-connector-python<3.0.0' \
-            'cffi<2.0.0' \
-            --no-deps \
-            --platform manylinux2010_x86_64 \
-            --only-binary=:all:
-          # Install remaining dependencies
-          pip install --target ./deployment_zip \
-            -r requirements.txt \
-            --platform manylinux2010_x86_64 \
-            --only-binary=:all:
+
+          # Set up pip configuration for Lambda compatibility
+          pip config set global.target ./deployment_zip
+          pip config set global.platform manylinux2014_x86_64
+          
+          # Install all dependencies at once from requirements.txt
+          pip install -r requirements.txt \
+            --target ./deployment_zip \
+            --platform manylinux2014_x86_64 \
+            --implementation cp \
+            --python-version 3.9 \
+            --only-binary=:all: \
+            --upgrade
           # Copy the Lambda function
           cp ./lambda_function.py ./deployment_zip/
           cd deployment_zip
