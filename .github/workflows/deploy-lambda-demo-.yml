@@ -19,12 +19,25 @@ jobs:
           cp ./lambda_function.py  ./deployment_zip
           cd deployment_zip 
           zip -r lambda_zip.zip *
-          aws lambda get-function --function-name lambda_deployment_via_gitaction || aws lambda create-function \
-            --function-name lambda_deployment_via_gitaction \
-            --zip-file fileb://lambda_zip.zip \
-            --runtime python3.8 \
-            --handler lambda_function.lambda_handler \
-            --role arn:aws:iam::123456789012:role/lambda_basic_execution
+          # First check if function exists
+          if ! aws lambda get-function --function-name lambda_deployment_via_gitaction 2>/dev/null; then
+            echo "Lambda function does not exist. Creating new function..."
+            # Get the Lambda execution role ARN from environment
+            LAMBDA_ROLE_ARN="${{ secrets.LAMBDA_ROLE_ARN }}"
+            if [ -z "$LAMBDA_ROLE_ARN" ]; then
+              echo "Error: LAMBDA_ROLE_ARN secret is not set"
+              exit 1
+            fi
+            # Create the Lambda function
+            aws lambda create-function \
+              --function-name lambda_deployment_via_gitaction \
+              --zip-file fileb://lambda_zip.zip \
+              --runtime python3.8 \
+              --handler lambda_function.lambda_handler \
+              --role "$LAMBDA_ROLE_ARN"
+          else
+            echo "Lambda function already exists. Proceeding with update..."
+          fi
       - name: lambda_code_update
         run: |
           aws lambda update-function-code --function-name lambda_deployment_via_gitaction --zip-file fileb://./deployment_zip/lambda_zip.zip
