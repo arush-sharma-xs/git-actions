@@ -163,7 +163,7 @@ def lambda_handler(event, context):
         task = event.get('task', '')
         job = event.get('job', '')
         attempt_count = event.get('attempt_count', '')
-        temp_var = false
+        temp_var1 = false
         
         
         if not user_query or not user_role or not task or not job or not max_attempts or not attempt_count:
