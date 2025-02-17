@@ -1,13 +1,11 @@
 name: GitHub Actions - Deploy Lambda function
 run-name: ${{ github.actor }} is deploying the lambda function on AWS 🚀
-# on: [push]
 on:
   push:
     branches:
       - main
-
 jobs:
-  lambda_demo:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,105 +14,102 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-      - name: Creating deployment zip
+          aws-region: eu-central-1
+      - name: install_dependency
         run: |
           sudo apt install zip
           mkdir -p ./deployment_zip
-          echo "Installing required packages for Lambda Layer..."
-          # pip install -r requirements.txt \
-          # --platform manylinux2014_x86_64 \
-          # --only-binary=:all: \
-          # --target python/ \
-          # --upgrade \
-          # --python-version 3.12
+          # Install dependencies in the deployment package
+          # pip install --target ./deployment_zip snowflake-connector-python --platform manylinux2010_x86_64 --only-binary=:all:
 
-          # Copy the Lambda function
-          cp ./lambda_function.py ./deployment_zip/
-          cd deployment_zip
-          zip -r lambda_zip.zip *
+          # # Copy the Lambda function
+          # cp ./lambda_function.py ./deployment_zip/
+          # cd deployment_zip
+          # zip -r lambda_zip.zip *
 
-          # First check if function exists
-          if ! aws lambda get-function --function-name lambda_deployment_via_gitaction 2>/dev/null; then
-            echo "Lambda function does not exist. Creating new function..."
-            # Get the Lambda execution role ARN from environment
-            LAMBDA_ROLE_ARN="${{ secrets.LAMBDA_ROLE_ARN }}"
-            if [ -z "$LAMBDA_ROLE_ARN" ]; then
-              echo "Error: LAMBDA_ROLE_ARN secret is not set"
+      - name: lambda_deploy
+        run: |
+          #Variabes
+          BASE_DIR="./external-lambdas"
+
+          if [ ! -d "$BASE_DIR" ]; then
+              echo "Error: $BASE_DIR directory not found"
               exit 1
-            fi
-            # Create the Lambda function
-            aws lambda create-function \
-              --function-name lambda_deployment_via_gitaction \
-              --zip-file fileb://lambda_zip.zip \
-              --runtime python3.8 \
-              --handler lambda_function.lambda_handler \
-              --role "$LAMBDA_ROLE_ARN"
-            
-            # Wait for the function to be active
-            echo "Waiting for Lambda function to be active..."
-            while true; do
-              STATUS=$(aws lambda get-function --function-name lambda_deployment_via_gitaction --query 'Configuration.State' --output text 2>/dev/null)
-              if [ "$STATUS" = "Active" ]; then
-                echo "Lambda function is now active"
-                break
-              elif [ "$STATUS" = "Failed" ]; then
-                echo "Lambda function creation failed"
-                exit 1
-              fi
-              echo "Current status: $STATUS. Waiting..."
-              sleep 5
-            done
-          else
-            echo "Lambda function already exists. Proceeding with update..."
-          fi
-      - name: Check for code changes
-        id: check_changes
-        run: |
-          # Get current deployment package hash
-          CURRENT_HASH=$(cd deployment_zip && find . -type f -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1)
-          echo "Current package hash: $CURRENT_HASH"
-
-          # Get deployed function hash
-          DEPLOYED_HASH=$(aws lambda get-function \
-            --function-name lambda_deployment_via_gitaction \
-            --query 'Configuration.CodeSha256' \
-            --output text || echo "none")
-          echo "Deployed function hash: $DEPLOYED_HASH"
-
-          # Store the result
-          if [ "$DEPLOYED_HASH" != "none" ] && [ "$CURRENT_HASH" = "$DEPLOYED_HASH" ]; then
-            echo "No code changes detected"
-            echo "needs_update=false" >> $GITHUB_OUTPUT
-          else
-            echo "Code changes detected"
-            echo "needs_update=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Update Lambda function
-        if: steps.check_changes.outputs.needs_update == 'true'
-        run: |
-          echo "Updating Lambda function with new code..."
-          MAX_RETRIES=5
-          RETRY_COUNT=0
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            if aws lambda update-function-code \
-              --function-name lambda_deployment_via_gitaction \
-              --zip-file fileb://./deployment_zip/lambda_zip.zip; then
-              echo "Successfully updated Lambda function code"
-              break
+          find "$BASE_DIR" -mindepth 1 -maxdepth 1 -type d | while read -r folder; do
+              echo "Checking folder: $folder"
+              files=("$folder"/*.py)
+
+              if [ -e "${files[0]}" ]; then
+                  #lets deploy python lambda function
+                  echo "deploy python lambda"
+                  cd "$folder"
+
+
+                  # Get the folder name without path
+                  FOLDER_NAME=$(basename "$folder")
+                  echo "Processing Lambda function for: $FOLDER_NAME"
+
+                  # Check for changes in the folder
+                  CHANGES=$(git diff --name-only HEAD HEAD~1 "$folder" || echo "")
+                  
+                  if [ -z "$CHANGES" ]; then
+                    echo "No changes detected in $FOLDER_NAME. Skipping deployment."
+                    continue
+                  fi
+                  
+                  echo "Changes detected in $FOLDER_NAME:"
+                  echo "$CHANGES"
+                  
+                  # Create deployment package
+                  echo "Creating deployment package..."
+                  mkdir -p ./deployment_zip
+                  cp -r $folder/* ./deployment_zip/
+                  cd deployment_zip
+                  zip -r lambda_zip.zip .
+                  cd ..
+
+                  # Check if function exists
+                  if ! aws lambda get-function --function-name "$FOLDER_NAME-lambda" 2>/dev/null; then
+                    echo "Lambda function does not exist. Creating new function..."
+                    
+                    aws lambda create-function \
+                      --function-name "$FOLDER_NAME-lambda" \
+                      --runtime "python3.9" \
+                      --role "${{ secrets.LAMBDA_ROLE_ARN }}" \
+                      --handler "lambda_handler.lambda_handler" \
+                      --zip-file "fileb://deployment_zip/lambda_zip.zip" \
+                      --timeout 120 \
+                      --memory-size 128
+
+                    echo "Waiting for function to be active..."
+                    while true; do
+                      STATUS=$(aws lambda get-function --function-name "$FOLDER_NAME-lambda" --query 'Configuration.State' --output text 2>/dev/null)
+                      if [ "$STATUS" = "Active" ]; then
+                        echo "Lambda function is now active"
+                        break
+                      elif [ "$STATUS" = "Failed" ]; then
+                        echo "Lambda function creation failed"
+                        exit 1
+                      fi
+                      echo "Current status: $STATUS. Waiting..."
+                      sleep 5
+                    done
+                  else
+                    echo "Lambda function exists. Updating code..."
+                    aws lambda update-function-code \
+                      --function-name "$FOLDER_NAME-lambda" \
+                      --zip-file "fileb://deployment_zip/lambda_zip.zip"
+                  fi
+
+                  # Clean up
+                  rm -rf ./deployment_zip
+
             else
-              RETRY_COUNT=$((RETRY_COUNT + 1))
-              if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-                echo "Failed to update Lambda function after $MAX_RETRIES attempts"
-                exit 1
-              fi
-              echo "Update failed. Retrying in 5 seconds... (Attempt $RETRY_COUNT of $MAX_RETRIES)"
-              sleep 5
+                echo "deploy node app "
+                echo "No Python files found in $folder"
             fi
+            #for now deploy only one code
+            break
           done
-
-      - name: Skip update notification
-        if: steps.check_changes.outputs.needs_update != 'true'
-        run: |
-          echo "No code changes detected. Skipping Lambda function update."

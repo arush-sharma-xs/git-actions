@@ -1,0 +1,154 @@
+name: Deploy Lambda Functions
+run-name: ${{ github.actor }} is deploying Lambda functions 🚀
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'external-lambdas/**'
+
+env:
+  PYTHON_VERSION: '3.9'
+  NODE_VERSION: '18'
+  DEFAULT_MEMORY: 128
+  DEFAULT_TIMEOUT: 120
+  BASE_DIR: './external-lambdas'
+
+jobs:
+  deploy-lambdas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need previous commit for diff
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy Lambda Functions
+        run: |
+          # Function to deploy a single Lambda
+          deploy_lambda() {
+            local folder=$1
+            local folder_name=$(basename "$folder")
+            echo "Processing: $folder_name"
+
+            # Check for code changes
+            local changes=$(git diff --name-only HEAD HEAD~1 "$folder" || echo "")
+            if [ -z "$changes" ]; then
+              echo "No changes detected in $folder_name. Skipping."
+              return 0
+            fi
+            echo "Changes detected in $folder_name:"
+            echo "$changes"
+
+            # Determine runtime and handler
+            local runtime="python3.9"
+            local handler="lambda_handler.lambda_handler"
+            if [ -f "$folder/package.json" ]; then
+              runtime="nodejs18.x"
+              handler="index.handler"
+            fi
+
+            # Create deployment package
+            echo "Creating deployment package..."
+            mkdir -p "$folder/deployment_zip"
+            
+            # Install dependencies based on runtime
+            if [ "$runtime" = "python3.9" ]; then
+              if [ -f "$folder/requirements.txt" ]; then
+                echo "Installing Python dependencies..."
+                pip install -r "$folder/requirements.txt" \
+                  --target "$folder/deployment_zip" \
+                  --platform manylinux2014_x86_64 \
+                  --implementation cp \
+                  --python-version 3.9 \
+                  --only-binary=:all: \
+                  --upgrade
+              fi
+            elif [ "$runtime" = "nodejs18.x" ] && [ -f "$folder/package.json" ]; then
+              echo "Installing Node.js dependencies..."
+              (cd "$folder" && npm install --production)
+              cp -r "$folder/node_modules" "$folder/deployment_zip/"
+            fi
+
+            # Copy function code
+            cp -r "$folder"/*.* "$folder/deployment_zip/"
+            
+            # Create ZIP file
+            echo "Creating deployment ZIP..."
+            (cd "$folder/deployment_zip" && zip -r ../function.zip .)
+
+            # Calculate deployment package hash
+            local current_hash=$(cd "$folder" && sha256sum function.zip | cut -d' ' -f1)
+            echo "Current package hash: $current_hash"
+
+            # Get deployed hash if function exists
+            local deployed_hash=""
+            if aws lambda get-function --function-name "$folder_name-lambda" 2>/dev/null; then
+              deployed_hash=$(aws lambda get-function \
+                --function-name "$folder_name-lambda" \
+                --query 'Configuration.CodeSha256' \
+                --output text)
+              echo "Deployed hash: $deployed_hash"
+            fi
+
+            # Deploy only if hashes differ or function doesn't exist
+            if [ "$current_hash" != "$deployed_hash" ]; then
+              if [ -z "$deployed_hash" ]; then
+                echo "Creating new Lambda function: $folder_name-lambda"
+                aws lambda create-function \
+                  --function-name "$folder_name-lambda" \
+                  --runtime "$runtime" \
+                  --handler "$handler" \
+                  --role "${{ secrets.LAMBDA_ROLE_ARN }}" \
+                  --zip-file "fileb://$folder/function.zip" \
+                  --timeout ${{ env.DEFAULT_TIMEOUT }} \
+                  --memory-size ${{ env.DEFAULT_MEMORY }}
+
+                echo "Waiting for function to be active..."
+                while true; do
+                  local status=$(aws lambda get-function \
+                    --function-name "$folder_name-lambda" \
+                    --query 'Configuration.State' \
+                    --output text)
+                  if [ "$status" = "Active" ]; then
+                    echo "Function is now active"
+                    break
+                  elif [ "$status" = "Failed" ]; then
+                    echo "Function creation failed"
+                    exit 1
+                  fi
+                  echo "Current status: $status. Waiting..."
+                  sleep 5
+                done
+              else
+                echo "Updating existing function: $folder_name-lambda"
+                aws lambda update-function-code \
+                  --function-name "$folder_name-lambda" \
+                  --zip-file "fileb://$folder/function.zip"
+              fi
+            else
+              echo "No code changes detected. Skipping deployment."
+            fi
+
+            # Cleanup
+            rm -rf "$folder/deployment_zip"
+            rm -f "$folder/function.zip"
+          }
+
+          # Process each Lambda function
+          find "${{ env.BASE_DIR }}" -mindepth 1 -maxdepth 1 -type d | while read -r folder; do
+            deploy_lambda "$folder"
+          done
