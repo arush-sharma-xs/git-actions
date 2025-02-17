@@ -1,6 +1,11 @@
 name: GitHub Actions - Deploy Lambda function
 run-name: ${{ github.actor }} is deploying the lambda function on AWS 🚀
-on: [push]
+# on: [push]
+on:
+  push:
+    branches:
+      - main
+
 jobs:
   lambda_demo:
     runs-on: ubuntu-latest
@@ -15,11 +20,14 @@ jobs:
       - name: Creating deployment zip
         run: |
           sudo apt install zip
-          mkdir -p ./deployment_zip 
-          cp ./lambda_function.py  ./deployment_zip
-          cd deployment_zip 
+          mkdir -p ./deployment_zip
+          # Install dependencies in the deployment package
+          pip install --target ./deployment_zip snowflake-connector-python --platform manylinux2010_x86_64 --only-binary=:all:
+          # Copy the Lambda function
+          cp ./lambda_function.py ./deployment_zip/
+          cd deployment_zip
           zip -r lambda_zip.zip *
-          
+
           # First check if function exists
           if ! aws lambda get-function --function-name lambda_deployment_via_gitaction 2>/dev/null; then
             echo "Lambda function does not exist. Creating new function..."
