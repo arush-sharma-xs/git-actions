@@ -51,8 +51,20 @@ jobs:
                   FOLDER_NAME=$(basename "$folder")
                   echo "Processing Lambda function for: $FOLDER_NAME"
 
-                  # Check for changes in the folder
-                  CHANGES=$(git diff --name-only HEAD HEAD~1 "$folder" || echo "")
+                  # Ensure we have enough git history
+                  git fetch --depth=2
+
+                  # Check for changes in the folder (including new files)
+                  CHANGES=$(
+                    {
+                      # Changes in existing files
+                      git diff --name-only HEAD HEAD~1 "$folder" 2>/dev/null;
+                      # Newly added files
+                      git ls-files --others --exclude-standard "$folder";
+                      # Deleted files
+                      git diff --diff-filter=D --name-only HEAD HEAD~1 "$folder" 2>/dev/null;
+                    } | sort -u || echo ""
+                  )
                   
                   if [ -z "$CHANGES" ]; then
                     echo "No changes detected in $FOLDER_NAME. Skipping deployment."
