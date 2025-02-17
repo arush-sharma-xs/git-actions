@@ -19,6 +19,7 @@ jobs:
           cp ./lambda_function.py  ./deployment_zip
           cd deployment_zip 
           zip -r lambda_zip.zip *
+          
           # First check if function exists
           if ! aws lambda get-function --function-name lambda_deployment_via_gitaction 2>/dev/null; then
             echo "Lambda function does not exist. Creating new function..."
@@ -35,9 +36,42 @@ jobs:
               --runtime python3.8 \
               --handler lambda_function.lambda_handler \
               --role "$LAMBDA_ROLE_ARN"
+            
+            # Wait for the function to be active
+            echo "Waiting for Lambda function to be active..."
+            while true; do
+              STATUS=$(aws lambda get-function --function-name lambda_deployment_via_gitaction --query 'Configuration.State' --output text 2>/dev/null)
+              if [ "$STATUS" = "Active" ]; then
+                echo "Lambda function is now active"
+                break
+              elif [ "$STATUS" = "Failed" ]; then
+                echo "Lambda function creation failed"
+                exit 1
+              fi
+              echo "Current status: $STATUS. Waiting..."
+              sleep 5
+            done
           else
             echo "Lambda function already exists. Proceeding with update..."
           fi
       - name: lambda_code_update
         run: |
-          aws lambda update-function-code --function-name lambda_deployment_via_gitaction --zip-file fileb://./deployment_zip/lambda_zip.zip
+          # Update function code with retry logic
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if aws lambda update-function-code \
+              --function-name lambda_deployment_via_gitaction \
+              --zip-file fileb://./deployment_zip/lambda_zip.zip; then
+              echo "Successfully updated Lambda function code"
+              break
+            else
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+                echo "Failed to update Lambda function after $MAX_RETRIES attempts"
+                exit 1
+              fi
+              echo "Update failed. Retrying in 5 seconds... (Attempt $RETRY_COUNT of $MAX_RETRIES)"
+              sleep 5
+            fi
+          done
