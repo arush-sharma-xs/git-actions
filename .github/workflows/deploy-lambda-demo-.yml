@@ -22,12 +22,12 @@ jobs:
           sudo apt install zip
           mkdir -p ./deployment_zip
           echo "Installing required packages for Lambda Layer..."
-          pip install -r requirements.txt \
-          --platform manylinux2014_x86_64 \
-          --only-binary=:all: \
-          --target python/ \
-          --upgrade \
-          --python-version 3.12
+          # pip install -r requirements.txt \
+          # --platform manylinux2014_x86_64 \
+          # --only-binary=:all: \
+          # --target python/ \
+          # --upgrade \
+          # --python-version 3.12
 
           # Copy the Lambda function
           cp ./lambda_function.py ./deployment_zip/
