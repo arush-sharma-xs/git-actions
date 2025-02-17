@@ -19,6 +19,12 @@ jobs:
           cp ./lambda_function.py  ./deployment_zip
           cd deployment_zip 
           zip -r lambda_zip.zip *
+          aws lambda get-function --function-name lambda_deployment_via_gitaction || aws lambda create-function \
+            --function-name lambda_deployment_via_gitaction \
+            --zip-file fileb://lambda_zip.zip \
+            --runtime python3.8 \
+            --handler lambda_function.lambda_handler \
+            --role arn:aws:iam::123456789012:role/lambda_basic_execution
       - name: lambda_code_update
         run: |
           aws lambda update-function-code --function-name lambda_deployment_via_gitaction --zip-file fileb://./deployment_zip/lambda_zip.zip
