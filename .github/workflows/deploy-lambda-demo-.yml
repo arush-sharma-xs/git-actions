@@ -62,9 +62,33 @@ jobs:
           else
             echo "Lambda function already exists. Proceeding with update..."
           fi
-      - name: lambda_code_update
+      - name: Check for code changes
+        id: check_changes
         run: |
-          # Update function code with retry logic
+          # Get current deployment package hash
+          CURRENT_HASH=$(cd deployment_zip && find . -type f -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1)
+          echo "Current package hash: $CURRENT_HASH"
+
+          # Get deployed function hash
+          DEPLOYED_HASH=$(aws lambda get-function \
+            --function-name lambda_deployment_via_gitaction \
+            --query 'Configuration.CodeSha256' \
+            --output text || echo "none")
+          echo "Deployed function hash: $DEPLOYED_HASH"
+
+          # Store the result
+          if [ "$DEPLOYED_HASH" != "none" ] && [ "$CURRENT_HASH" = "$DEPLOYED_HASH" ]; then
+            echo "No code changes detected"
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+          else
+            echo "Code changes detected"
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Lambda function
+        if: steps.check_changes.outputs.needs_update == 'true'
+        run: |
+          echo "Updating Lambda function with new code..."
           MAX_RETRIES=5
           RETRY_COUNT=0
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
@@ -83,3 +107,8 @@ jobs:
               sleep 5
             fi
           done
+
+      - name: Skip update notification
+        if: steps.check_changes.outputs.needs_update != 'true'
+        run: |
+          echo "No code changes detected. Skipping Lambda function update."
