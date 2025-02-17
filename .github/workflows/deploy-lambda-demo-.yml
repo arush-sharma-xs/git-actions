@@ -21,19 +21,14 @@ jobs:
         run: |
           sudo apt install zip
           mkdir -p ./deployment_zip
-
-          # Set up pip configuration for Lambda compatibility
-          pip config set global.target ./deployment_zip
-          pip config set global.platform manylinux2014_x86_64
-          
-          # Install all dependencies at once from requirements.txt
+          echo "Installing required packages for Lambda Layer..."
           pip install -r requirements.txt \
-            --target ./deployment_zip \
-            --platform manylinux2014_x86_64 \
-            --implementation cp \
-            --python-version 3.9 \
-            --only-binary=:all: \
-            --upgrade
+          --platform manylinux2014_x86_64 \
+          --only-binary=:all: \
+          --target python/ \
+          --upgrade \
+          --python-version 3.12
+
           # Copy the Lambda function
           cp ./lambda_function.py ./deployment_zip/
           cd deployment_zip
