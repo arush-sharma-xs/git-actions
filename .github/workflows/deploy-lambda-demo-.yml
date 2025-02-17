@@ -4,124 +4,136 @@ on:
   push:
     branches:
       - main
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # Ensure we have enough history for git diff
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-central-1
-      - name: install_dependency
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+
+      - name: Install dependencies
         run: |
           sudo apt install zip
-          mkdir -p ./deployment_zip
-          # Install dependencies in the deployment package
-          # pip install --target ./deployment_zip snowflake-connector-python --platform manylinux2010_x86_64 --only-binary=:all:
+          python -m pip install --upgrade pip
 
-          # # Copy the Lambda function
-          # cp ./lambda_function.py ./deployment_zip/
-          # cd deployment_zip
-          # zip -r lambda_zip.zip *
-
-      - name: lambda_deploy
+      - name: Deploy Lambda functions
         run: |
-          #Variabes
-          BASE_DIR="./external-lambdas"
+          # Variables
+          BASE_DIR="external-lambdas"
+          WORK_DIR="$PWD"
 
           if [ ! -d "$BASE_DIR" ]; then
               echo "Error: $BASE_DIR directory not found"
               exit 1
           fi
 
+          # Process each Lambda function
           find "$BASE_DIR" -mindepth 1 -maxdepth 1 -type d | while read -r folder; do
-              echo "Checking folder: $folder"
-              files=("$folder"/*.py)
+              FOLDER_NAME=$(basename "$folder")
+              echo "Processing Lambda function: $FOLDER_NAME"
 
-              if [ -e "${files[0]}" ]; then
-                  #lets deploy python lambda function
-                  echo "deploy python lambda"
-                  cd "$folder"
+              # Check for Python files
+              if ! ls "$folder"/*.py >/dev/null 2>&1; then
+                  echo "No Python files found in $folder. Skipping."
+                  continue
+              fi
 
+              # Check for changes
+              CHANGES=$(
+                {
+                  # Changes in existing files
+                  git diff --name-only HEAD HEAD~1 "$BASE_DIR/$FOLDER_NAME" 2>/dev/null;
+                  # Newly added files
+                  git ls-files --others --exclude-standard "$BASE_DIR/$FOLDER_NAME";
+                  # Deleted files
+                  git diff --diff-filter=D --name-only HEAD HEAD~1 "$BASE_DIR/$FOLDER_NAME" 2>/dev/null;
+                } | sort -u || echo ""
+              )
 
-                  # Get clean folder name without full path
-                  FOLDER_NAME=$(basename "$folder")
-                  echo "Processing Lambda function for: $FOLDER_NAME"
+              if [ -z "$CHANGES" ]; then
+                echo "No changes detected in $FOLDER_NAME. Skipping deployment."
+                continue
+              fi
 
-                  # Ensure we have enough git history
-                  git fetch --depth=2
+              echo "Changes detected in $FOLDER_NAME:"
+              echo "$CHANGES"
 
-                  # Check for changes in the folder (including new files)
-                  CHANGES=$(
-                    {
-                      # Changes in existing files
-                      git diff --name-only HEAD HEAD~1 "external-lambdas/$FOLDER_NAME" 2>/dev/null;
-                      # Newly added files
-                      git ls-files --others --exclude-standard "external-lambdas/$FOLDER_NAME";
-                      # Deleted files
-                      git diff --diff-filter=D --name-only HEAD HEAD~1 "external-lambdas/$FOLDER_NAME" 2>/dev/null;
-                    } | sort -u || echo ""
-                  )
+              # Create deployment package
+              echo "Creating deployment package..."
+              DEPLOY_DIR="$WORK_DIR/deployment_packages/$FOLDER_NAME"
+              mkdir -p "$DEPLOY_DIR"
+
+              # Install dependencies if requirements.txt exists
+              if [ -f "$folder/requirements.txt" ]; then
+                echo "Installing Python dependencies..."
+                pip install -r "$folder/requirements.txt" \
+                  --target "$DEPLOY_DIR" \
+                  --platform manylinux2014_x86_64 \
+                  --implementation cp \
+                  --python-version 3.9 \
+                  --only-binary=:all: \
+                  --upgrade
+              fi
+
+              # Copy function code
+              cp -r "$folder"/* "$DEPLOY_DIR/"
+
+              # Create ZIP file
+              echo "Creating ZIP file..."
+              (cd "$DEPLOY_DIR" && zip -r ../function.zip .)
+
+              # Deploy to AWS Lambda
+              if ! aws lambda get-function --function-name "$FOLDER_NAME-lambda" 2>/dev/null; then
+                echo "Creating new Lambda function: $FOLDER_NAME-lambda"
+                aws lambda create-function \
+                  --function-name "$FOLDER_NAME-lambda" \
+                  --runtime "python3.9" \
+                  --role "${{ secrets.LAMBDA_ROLE_ARN }}" \
+                  --handler "lambda_handler.lambda_handler" \
+                  --zip-file "fileb://$WORK_DIR/deployment_packages/function.zip" \
+                  --timeout 120 \
+                  --memory-size 128
+
+                echo "Waiting for function to be active..."
+                while true; do
+                  STATUS=$(aws lambda get-function \
+                    --function-name "$FOLDER_NAME-lambda" \
+                    --query 'Configuration.State' \
+                    --output text 2>/dev/null)
                   
-                  if [ -z "$CHANGES" ]; then
-                    echo "No changes detected in $FOLDER_NAME. Skipping deployment."
-                    continue
+                  if [ "$STATUS" = "Active" ]; then
+                    echo "Lambda function is now active"
+                    break
+                  elif [ "$STATUS" = "Failed" ]; then
+                    echo "Lambda function creation failed"
+                    exit 1
                   fi
-                  
-                  echo "Changes detected in $FOLDER_NAME:"
-                  echo "$CHANGES"
-                  
-                  # Create deployment package
-                  echo "Creating deployment package..."
-                  mkdir -p ./deployment_zip
-                  cp -r $folder/* ./deployment_zip/
-                  cd deployment_zip
-                  zip -r lambda_zip.zip .
-                  cd ..
+                  echo "Current status: $STATUS. Waiting..."
+                  sleep 5
+                done
+              else
+                echo "Updating existing Lambda function: $FOLDER_NAME-lambda"
+                aws lambda update-function-code \
+                  --function-name "$FOLDER_NAME-lambda" \
+                  --zip-file "fileb://$WORK_DIR/deployment_packages/function.zip"
+              fi
 
-                  # Check if function exists
-                  if ! aws lambda get-function --function-name "$FOLDER_NAME-lambda" 2>/dev/null; then
-                    echo "Lambda function does not exist. Creating new function..."
-                    
-                    aws lambda create-function \
-                      --function-name "$FOLDER_NAME-lambda" \
-                      --runtime "python3.9" \
-                      --role "${{ secrets.LAMBDA_ROLE_ARN }}" \
-                      --handler "lambda_handler.lambda_handler" \
-                      --zip-file "fileb://deployment_zip/lambda_zip.zip" \
-                      --timeout 120 \
-                      --memory-size 128
+              # Clean up
+              rm -rf "$WORK_DIR/deployment_packages"
 
-                    echo "Waiting for function to be active..."
-                    while true; do
-                      STATUS=$(aws lambda get-function --function-name "$FOLDER_NAME-lambda" --query 'Configuration.State' --output text 2>/dev/null)
-                      if [ "$STATUS" = "Active" ]; then
-                        echo "Lambda function is now active"
-                        break
-                      elif [ "$STATUS" = "Failed" ]; then
-                        echo "Lambda function creation failed"
-                        exit 1
-                      fi
-                      echo "Current status: $STATUS. Waiting..."
-                      sleep 5
-                    done
-                  else
-                    echo "Lambda function exists. Updating code..."
-                    aws lambda update-function-code \
-                      --function-name "$FOLDER_NAME-lambda" \
-                      --zip-file "fileb://deployment_zip/lambda_zip.zip"
-                  fi
-
-                  # Clean up
-                  rm -rf ./deployment_zip
-
-            else
-                echo "deploy node app "
-                echo "No Python files found in $folder"
-            fi
-            #for now deploy only one code
-            break
+              echo "Deployment completed for $FOLDER_NAME"
           done
