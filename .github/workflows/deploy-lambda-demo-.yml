@@ -47,7 +47,7 @@ jobs:
                   cd "$folder"
 
 
-                  # Get the folder name without path
+                  # Get clean folder name without full path
                   FOLDER_NAME=$(basename "$folder")
                   echo "Processing Lambda function for: $FOLDER_NAME"
 
@@ -58,11 +58,11 @@ jobs:
                   CHANGES=$(
                     {
                       # Changes in existing files
-                      git diff --name-only HEAD HEAD~1 "$folder" 2>/dev/null;
+                      git diff --name-only HEAD HEAD~1 "external-lambdas/$FOLDER_NAME" 2>/dev/null;
                       # Newly added files
-                      git ls-files --others --exclude-standard "$folder";
+                      git ls-files --others --exclude-standard "external-lambdas/$FOLDER_NAME";
                       # Deleted files
-                      git diff --diff-filter=D --name-only HEAD HEAD~1 "$folder" 2>/dev/null;
+                      git diff --diff-filter=D --name-only HEAD HEAD~1 "external-lambdas/$FOLDER_NAME" 2>/dev/null;
                     } | sort -u || echo ""
                   )
                   
