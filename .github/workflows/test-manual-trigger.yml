@@ -1,15 +1,24 @@
-name: Test- Manual trigger
-run-name: "Test to deploy manual trigger"
+name: CI/CD Pipeline
+
 on:
   push:
     branches:
       - main
-  workflow_dispatch:
+  workflow_dispatch: # Allows manual triggering
 
 jobs:
-  test:
-    name: Test
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Test
-        run: echo "Test"
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Run Build
+        run: echo "Building the project..."
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy Application
+        run: echo "Deploying the application..."
