@@ -5,14 +5,14 @@ on:
   push:
     branches: [main]
     paths:
-      - 'external-lambdas/**'
+      - "external-lambdas/**"
 
 env:
-  PYTHON_VERSION: '3.9'
-  NODE_VERSION: '18'
+  PYTHON_VERSION: "3.9"
+  NODE_VERSION: "18"
   DEFAULT_MEMORY: 128
   DEFAULT_TIMEOUT: 120
-  BASE_DIR: './external-lambdas'
+  BASE_DIR: "./external-lambdas"
 
 jobs:
   deploy-lambdas:
@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2  # Need previous commit for diff
+          fetch-depth: 2 # Need previous commit for diff
 
       - uses: actions/setup-python@v4
         with:

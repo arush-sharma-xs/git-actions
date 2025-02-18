@@ -1,17 +1,16 @@
-name: GitHub Actions - Deploy Lambda function
+name: Lifedata - Deploy Lambda function
 run-name: ${{ github.actor }} is deploying the lambda function on AWS 🚀
 on:
   push:
     branches:
-      - main
-
+      - feature/external-lambdas
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2 # Ensure we have enough history for git diff
+          fetch-depth: 2
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -32,8 +31,8 @@ jobs:
 
       - name: Deploy Lambda functions
         run: |
-          # Variables
-          BASE_DIR="external-lambdas"
+
+          BASE_DIR="external-lambdas-test"
           WORK_DIR="$PWD"
 
           if [ ! -d "$BASE_DIR" ]; then
@@ -41,7 +40,6 @@ jobs:
               exit 1
           fi
 
-          # Process each Lambda function
           find "$BASE_DIR" -mindepth 1 -maxdepth 1 -type d | while read -r folder; do
               FOLDER_NAME=$(basename "$folder")
               echo "Processing Lambda function: $FOLDER_NAME"
@@ -49,8 +47,81 @@ jobs:
               # Check for Python files
               if ! ls "$folder"/*.py >/dev/null 2>&1; then
                   echo "No Python files found in $folder. Skipping."
+
+                  echo "deploy Nodejs applications"
+                  
+                  CHANGES=$(
+                    {
+                      # Changes in existing files
+                      git diff --name-only HEAD HEAD~1 "$BASE_DIR/$FOLDER_NAME" 2>/dev/null;
+                      # Newly added files
+                      git ls-files --others --exclude-standard "$BASE_DIR/$FOLDER_NAME";
+                      # Deleted files
+                      git diff --diff-filter=D --name-only HEAD HEAD~1 "$BASE_DIR/$FOLDER_NAME" 2>/dev/null;
+                    } | sort -u || echo ""
+                  )
+                      
+                  if [ -z "$CHANGES" ]; then
+                    echo "No changes detected in $FOLDER_NAME. Skipping deployment."
+                    continue
+                  fi
+
+                  echo "Changes detected in $FOLDER_NAME:"
+                  echo "$CHANGES"
+
+                  # Create deployment package
+                  echo "Creating deployment package..."
+                  DEPLOY_DIR="$WORK_DIR/deployment_packages/$FOLDER_NAME"
+                  mkdir -p "$DEPLOY_DIR"
+                  
+                  # Copy function code
+                  cp -r "$folder"/* "$DEPLOY_DIR/"
+
+                  # Create ZIP file
+                  echo "Creating ZIP file..."
+                  (cd "$DEPLOY_DIR" && zip -r ../function.zip .)
+
+                  ##### Deploy NodeJS app to AWS Lambda
+                  
+                  if ! aws lambda get-function --function-name "$FOLDER_NAME-lambda" 2>/dev/null; then
+                    echo "Creating new Lambda function: $FOLDER_NAME-lambda"
+                    aws lambda create-function \
+                      --function-name "$FOLDER_NAME-lambda" \
+                      --runtime "nodejs20.x" \
+                      --role "${{ secrets.LAMBDA_ROLE_ARN }}" \
+                      --handler "index.handler" \
+                      --zip-file "fileb://$WORK_DIR/deployment_packages/function.zip" \
+                      --timeout 120 \
+                      --memory-size 128
+
+                    echo "Waiting for function to be active..."
+
+                    while true; do
+                      STATUS=$(aws lambda get-function \
+                        --function-name "$FOLDER_NAME-lambda" \
+                        --query 'Configuration.State' \
+                        --output text 2>/dev/null)
+                      
+                      if [ "$STATUS" = "Active" ]; then
+                        echo "Lambda function is now active"
+                        break
+                      elif [ "$STATUS" = "Failed" ]; then
+                        echo "Lambda function creation failed"
+                        exit 1
+                      fi
+                      echo "Current status: $STATUS. Waiting..."
+                      sleep 5
+                    done
+                  else
+                    echo "Updating existing Lambda function: $FOLDER_NAME-lambda"
+                    aws lambda update-function-code \
+                      --function-name "$FOLDER_NAME-lambda" \
+                      --zip-file "fileb://$WORK_DIR/deployment_packages/function.zip"
+                  fi
                   continue
               fi
+
+              # deploy python Lambda function
 
               # Check for changes
               CHANGES=$(
@@ -109,6 +180,7 @@ jobs:
                   --memory-size 128
 
                 echo "Waiting for function to be active..."
+
                 while true; do
                   STATUS=$(aws lambda get-function \
                     --function-name "$FOLDER_NAME-lambda" \
