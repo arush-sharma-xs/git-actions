@@ -21,4 +21,4 @@ jobs:
     needs: build
     steps:
       - name: Deploy Application
-        run: echo "Deploying the application..."
+        run: echo "New deployment the application..."
