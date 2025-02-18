@@ -46,8 +46,6 @@ jobs:
 
               # Check for Python files
               if ! ls "$folder"/*.py >/dev/null 2>&1; then
-                  echo "No Python files found in $folder. Skipping."
-
                   echo "deploy Nodejs applications"
                   
                   CHANGES=$(
@@ -117,6 +115,8 @@ jobs:
                     aws lambda update-function-code \
                       --function-name "$FOLDER_NAME-lambda" \
                       --zip-file "fileb://$WORK_DIR/deployment_packages/function.zip"
+
+                    echo "Lambda function is updated"
                   fi
                   continue
               fi

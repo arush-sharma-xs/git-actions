@@ -340,7 +340,7 @@ export const handler = async (event) => {
           }
         );
 
-        console.log("response:++++++", response);
+        console.log("response:++++++ changed", response);
       } catch (err) {
         console.log(`error while creating event lable: ${err}`);
       }
