@@ -1,12 +1,22 @@
-import axios from 'axios'
-import {v4 as uuid} from 'uuid'
+import axios from "axios";
+import { v4 as uuid } from "uuid";
 // import AWS from 'aws-sdk'
 // import aws4 from 'aws4';
 
 /* api to get customer profile */
 const getProfile = /* GraphQL */ `
-  query GetProfile($enterpriseId: ID!, $mode: MODE!, $channel: CHANNEL!, $profileId: ID!) {
-    getProfile(enterpriseId: $enterpriseId, mode: $mode, channel: $channel, profileId: $profileId) {
+  query GetProfile(
+    $enterpriseId: ID!
+    $mode: MODE!
+    $channel: CHANNEL!
+    $profileId: ID!
+  ) {
+    getProfile(
+      enterpriseId: $enterpriseId
+      mode: $mode
+      channel: $channel
+      profileId: $profileId
+    ) {
       enterpriseId
       mode
       profileId
@@ -22,7 +32,7 @@ const getProfile = /* GraphQL */ `
       updatedAt
     }
   }
-`
+`;
 /* api to get session data */
 const searchSessionsWithConversation = /* GraphQL */ `
   query SearchSessionsWithConversation(
@@ -86,7 +96,7 @@ const searchSessionsWithConversation = /* GraphQL */ `
       __typename
     }
   }
-`
+`;
 
 const createEventLabel = /* GraphQL */ `
   mutation CreateEventLabel(
@@ -166,11 +176,11 @@ const createEventLabel = /* GraphQL */ `
       __typename
     }
   }
-`
+`;
 
 export const handler = async (event) => {
-  const APPSYNC_ENDPOINT = process.env.APPSYNC_ENDPOINT
-  const APPSYNC_API_KEY = process.env.APPSYNC_API_KEY
+  const APPSYNC_ENDPOINT = process.env.APPSYNC_ENDPOINT;
+  const APPSYNC_API_KEY = process.env.APPSYNC_API_KEY;
 
   // const docClient = new AWS.DynamoDB.DocumentClient();
   // const params = {
@@ -182,53 +192,53 @@ export const handler = async (event) => {
   // const result = await docClient.scan(params).promise();
   // const latestItem = result.Items[0];
 
-  console.log('event', event)
+  console.log("event", event);
   // const clientIp = event.requestContext.identity.sourceIp;
 
-  const queryParams = event.queryStringParameters
+  const queryParams = event.queryStringParameters;
 
   if (queryParams && queryParams.redirect_url) {
-    const decodedUrl = decodeURIComponent(queryParams.redirect_url)
+    const decodedUrl = decodeURIComponent(queryParams.redirect_url);
 
-    const trimmedUrl = decodedUrl.replace(/^.*?(https:\/\/.*)$/, '$1')
-    console.log('redirect_url:', trimmedUrl)
+    const trimmedUrl = decodedUrl.replace(/^.*?(https:\/\/.*)$/, "$1");
+    console.log("redirect_url:", trimmedUrl);
 
-    const customerId = queryParams.customerId
-    console.log('customerId: ', customerId)
-    const enterpriseId = queryParams.enterpriseId
-    const label = queryParams.data_point_name
-    const value = queryParams.data_point_value
+    const customerId = queryParams.customerId;
+    console.log("customerId: ", customerId);
+    const enterpriseId = queryParams.enterpriseId;
+    const label = queryParams.data_point_name;
+    const value = queryParams.data_point_value;
 
-    let customerData = null
-    let session = null
+    let customerData = null;
+    let session = null;
 
     if (queryParams.enterpriseId && queryParams.customerId) {
-      const {data: response} = await axios.post(
+      const { data: response } = await axios.post(
         APPSYNC_ENDPOINT,
         {
           query: getProfile,
           variables: {
             enterpriseId: enterpriseId,
-            mode: 'TEST',
-            channel: 'WHATSAPP',
+            mode: "TEST",
+            channel: "WHATSAPP",
             profileId: customerId,
           },
         },
         {
           headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': APPSYNC_API_KEY,
+            "Content-Type": "application/json",
+            "x-api-key": APPSYNC_API_KEY,
           },
         }
-      )
+      );
 
-      customerData = response?.data?.getProfile
+      customerData = response?.data?.getProfile;
     }
 
-    console.log('customerData', JSON.stringify(customerData))
+    console.log("customerData", JSON.stringify(customerData));
 
     if (customerData) {
-      const {data: response} = await axios.post(
+      const { data: response } = await axios.post(
         APPSYNC_ENDPOINT,
         {
           query: searchSessionsWithConversation,
@@ -238,7 +248,7 @@ export const handler = async (event) => {
                 eq: enterpriseId,
               },
               mode: {
-                eq: 'TEST',
+                eq: "TEST",
               },
               customerId: {
                 eq: customerData?.customer?.customerId,
@@ -246,54 +256,61 @@ export const handler = async (event) => {
             },
             sort: [
               {
-                field: 'updatedAt',
-                direction: 'desc',
+                field: "updatedAt",
+                direction: "desc",
               },
             ],
           },
         },
         {
           headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': APPSYNC_API_KEY,
+            "Content-Type": "application/json",
+            "x-api-key": APPSYNC_API_KEY,
           },
         }
-      )
+      );
 
-      console.log('latest data: ', JSON.stringify(response?.data?.searchSessions?.items[0]))
-      session = response?.data?.searchSessions?.items[0]
+      console.log(
+        "latest data: ",
+        JSON.stringify(response?.data?.searchSessions?.items[0])
+      );
+      session = response?.data?.searchSessions?.items[0];
     }
 
     if (session) {
-      const nextNodeId = session?.nextNodeId
-      const conversations = session?.conversationByDate?.items
+      const nextNodeId = session?.nextNodeId;
+      const conversations = session?.conversationByDate?.items;
 
-      let latestInteraction = null
-      let conversationId = null
-      let nodeId = null
-      let latestTime = null
+      let latestInteraction = null;
+      let conversationId = null;
+      let nodeId = null;
+      let latestTime = null;
 
       conversations.forEach((conversation) => {
-        const content = JSON.parse(conversation?.content)
+        const content = JSON.parse(conversation?.content);
         // if (content.nodeId === nextNodeId) {
         // }
-        const createdAt = new Date(conversation?.createdAt)
+        const createdAt = new Date(conversation?.createdAt);
         if (!latestTime || createdAt > latestTime) {
-          latestTime = createdAt
-          latestInteraction = content?.interactionId
-          conversationId = conversation?.conversationId
-          nodeId = content?.nodeId
+          latestTime = createdAt;
+          latestInteraction = content?.interactionId;
+          conversationId = conversation?.conversationId;
+          nodeId = content?.nodeId;
         }
-      })
+      });
 
       if (latestInteraction) {
-        console.log('Latest Interaction ID:', latestInteraction, conversationId)
+        console.log(
+          "Latest Interaction ID:",
+          latestInteraction,
+          conversationId
+        );
       } else {
-        console.log('No matching nodeId found.')
+        console.log("No matching nodeId found.");
       }
 
       try {
-        const {data: response} = await axios.post(
+        const { data: response } = await axios.post(
           APPSYNC_ENDPOINT,
           {
             query: createEventLabel,
@@ -306,7 +323,7 @@ export const handler = async (event) => {
                 flowId: session?.flowId,
                 customerId: session?.customerId,
                 workspaceId: session?.workspaceId,
-                type: 'DATA_POINT',
+                type: "DATA_POINT",
                 label: label,
                 value: value,
                 conversationId: conversationId,
@@ -317,15 +334,15 @@ export const handler = async (event) => {
           },
           {
             headers: {
-              'Content-Type': 'application/json',
-              'x-api-key': APPSYNC_API_KEY,
+              "Content-Type": "application/json",
+              "x-api-key": APPSYNC_API_KEY,
             },
           }
-        )
+        );
 
-        console.log('response:+++++', response)
+        console.log("response:++++++", response);
       } catch (err) {
-        console.log(`error while creating event lable: ${err}`)
+        console.log(`error while creating event lable: ${err}`);
       }
     }
 
@@ -335,12 +352,12 @@ export const handler = async (event) => {
         Location: decodedUrl,
         // 'X-Client-IP': clientIp
       },
-      body: '',
-    }
+      body: "",
+    };
   }
 
   return {
     statusCode: 400,
-    body: JSON.stringify({message: 'redirect_url is required'}),
-  }
-}
+    body: JSON.stringify({ message: "redirect_url is required" }),
+  };
+};
