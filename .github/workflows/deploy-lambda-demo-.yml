@@ -1,9 +1,9 @@
-name: Lifedata - Deploy Lambda function
+name: Demo - Deploy Lambda function
 run-name: ${{ github.actor }} is deploying the lambda function on AWS 🚀
 on:
   push:
     branches:
-      - feature/external-lambdas
+      - main
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -17,7 +17,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-central-1
+          aws-region: us-east-1
 
       - name: Set up Python
         uses: actions/setup-python@v4
